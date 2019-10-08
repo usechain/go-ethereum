@@ -5386,6 +5386,13 @@ var methods = function () {
         inputFormatter: [formatters.inputAddressFormatter]
     });
 
+    var generateOneTimeAddress = new Method({
+        name: 'generateOneTimeAddress',
+        call: 'eth_generateOneTimeAddress',
+        params: 1,
+        inputFormatter: [null]
+    });
+
     var sign = new Method({
         name: 'sign',
         call: 'eth_sign',
@@ -5452,6 +5459,7 @@ var methods = function () {
         getTransactionReceipt,
         getTransactionCount,
         getUseAddress,
+        generateOneTimeAddress,
         call,
         estimateGas,
         sendRawTransaction,
