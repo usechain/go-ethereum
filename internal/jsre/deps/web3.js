@@ -5379,6 +5379,13 @@ var methods = function () {
         inputFormatter: [formatters.inputTransactionFormatter]
     });
 
+    var getUseAddress = new Method({
+        name: 'getUseAddress',
+        call: 'eth_getUseAddress',
+        params: 1,
+        inputFormatter: [formatters.inputAddressFormatter]
+    });
+
     var sign = new Method({
         name: 'sign',
         call: 'eth_sign',
@@ -5444,6 +5451,7 @@ var methods = function () {
         getTransactionFromBlock,
         getTransactionReceipt,
         getTransactionCount,
+        getUseAddress,
         call,
         estimateGas,
         sendRawTransaction,

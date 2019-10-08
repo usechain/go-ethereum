@@ -49,7 +49,7 @@ type Key struct {
 	PrivateKey *ecdsa.PrivateKey
 	// add a second privkey for privary
 	PrivateKey2 *ecdsa.PrivateKey
-	// compact usechain address format
+	// compact wanchain address format
 	UAddress common.UAddress
 }
 
@@ -64,6 +64,8 @@ type keyStore interface {
 	GetKey(addr common.Address, filename string, auth string) (*Key, error)
 	// Writes and encrypts the key.
 	StoreKey(filename string, k *Key, auth string) error
+	// Loads an encrypted keyfile from disk
+	GetEncryptedKey(addr common.Address, filename string) (*Key, error)
 	// Joins filename with the key directory unless it is already absolute.
 	JoinPath(filename string) string
 }
