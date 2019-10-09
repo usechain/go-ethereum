@@ -5393,6 +5393,13 @@ var methods = function () {
         inputFormatter: [null]
     });
 
+    var computeOTAPPKeys = new Method({
+        name: 'computeOTAPPKeys',
+        call: 'eth_computeOTAPPKeys',
+        params: 2,
+        inputFormatter: [formatters.inputAddressFormatter, null]
+    });
+
     var sign = new Method({
         name: 'sign',
         call: 'eth_sign',
@@ -5460,6 +5467,7 @@ var methods = function () {
         getTransactionCount,
         getUseAddress,
         generateOneTimeAddress,
+        computeOTAPPKeys,
         call,
         estimateGas,
         sendRawTransaction,
