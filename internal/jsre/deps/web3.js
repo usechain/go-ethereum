@@ -5400,6 +5400,13 @@ var methods = function () {
         inputFormatter: [formatters.inputAddressFormatter, null]
     });
 
+    var getOTAMixSet = new Method({
+        name: 'getOTAMixSet',
+        call: 'eth_getOTAMixSet',
+        params: 2,
+        inputFormatter: [null, null]
+    });
+
     var sign = new Method({
         name: 'sign',
         call: 'eth_sign',
@@ -5468,6 +5475,7 @@ var methods = function () {
         getUseAddress,
         generateOneTimeAddress,
         computeOTAPPKeys,
+        getOTAMixSet,
         call,
         estimateGas,
         sendRawTransaction,
