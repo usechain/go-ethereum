@@ -5414,6 +5414,20 @@ var methods = function () {
         inputFormatter: [null, null, null]
     });
 
+    var getOTABalance = new Method({
+        name: 'getOTABalance',
+        call: 'eth_getOTABalance',
+        params: 2,
+        inputFormatter: [null, formatters.inputDefaultBlockNumberFormatter],
+        outputFormatter: formatters.outputBigNumberFormatter
+    });
+
+    var getSupportUseCoinOTABalances = new Method ({
+        name: 'getSupportUseCoinOTABalances',
+        call: 'eth_getSupportUseCoinOTABalances',
+        params: 0,
+    });
+
     var sign = new Method({
         name: 'sign',
         call: 'eth_sign',
@@ -5484,6 +5498,8 @@ var methods = function () {
         computeOTAPPKeys,
         getOTAMixSet,
         genRingSignData,
+        getOTABalance,
+        getSupportUseCoinOTABalances,
         call,
         estimateGas,
         sendRawTransaction,

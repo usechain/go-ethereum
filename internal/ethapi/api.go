@@ -2059,3 +2059,47 @@ func encodeRingSignOut(publicKeys []*ecdsa.PublicKey, keyimage *ecdsa.PublicKey,
 	outs := strings.Join([]string{pkStr, k, wStr, qStr}, "+")
 	return outs, nil
 }
+
+func (s *PrivateAccountAPI) GetOTABalance(ctx context.Context, blockNr rpc.BlockNumber) (*big.Int, error) {
+	state, _, err := s.b.StateAndHeaderByNumber(ctx, blockNr)
+	if state == nil || err != nil {
+		return nil, err
+	}
+
+	otaB, err := vm.GetUnspendOTATotalBalance(state)
+	if err != nil {
+		return common.Big0, err
+	}
+
+	return otaB, state.Error()
+
+}
+
+// GetOTABalance returns OTA balance
+func (s *PublicBlockChainAPI) GetOTABalance(ctx context.Context, otaUAddr string, blockNr rpc.BlockNumber) (*big.Int, error) {
+	if !hexutil.Has0xPrefix(otaUAddr) {
+		return nil, ErrInvalidOTAAddr
+	}
+
+	state, _, err := s.b.StateAndHeaderByNumber(ctx, blockNr)
+	if state == nil || err != nil {
+		return nil, err
+	}
+
+	var otaAX []byte
+	otaUAddrByte := common.FromHex(otaUAddr)
+	switch len(otaUAddrByte) {
+	case common.HashLength:
+		otaAX = otaUAddrByte
+	case common.UAddressLength:
+		otaAX, _ = vm.GetAXFromUseAddr(otaUAddrByte)
+	default:
+		return nil, ErrInvalidOTAAddr
+	}
+
+	return vm.GetOtaBalanceFromAX(state, otaAX)
+}
+
+func (s *PublicBlockChainAPI) GetSupportUseCoinOTABalances(ctx context.Context) []*big.Int {
+	return vm.GetSupportUseCoinOTABalances()
+}
