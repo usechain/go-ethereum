@@ -5407,6 +5407,13 @@ var methods = function () {
         inputFormatter: [null, null]
     });
 
+    var genRingSignData = new Method({
+        name: 'genRingSignData',
+        call: 'eth_genRingSignData',
+        params: 3,
+        inputFormatter: [null, null, null]
+    });
+
     var sign = new Method({
         name: 'sign',
         call: 'eth_sign',
@@ -5476,6 +5483,7 @@ var methods = function () {
         generateOneTimeAddress,
         computeOTAPPKeys,
         getOTAMixSet,
+        genRingSignData,
         call,
         estimateGas,
         sendRawTransaction,
