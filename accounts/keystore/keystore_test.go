@@ -28,6 +28,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
 )
 
@@ -54,10 +56,22 @@ func TestKeyStore(t *testing.T) {
 	if !ks.HasAddress(a.Address) {
 		t.Errorf("HasAccount(%x) should've returned true", a.Address)
 	}
-	if err := ks.Update(a, "foo", "bar"); err != nil {
+	auth := "foo"
+	if err := ks.Unlock(a, auth); err != nil {
+		t.Errorf("Unlock error: %v", err)
+	}
+	var uAddr common.UAddress
+	uAddr, err = ks.GetUseAddress(a)
+	if err != nil && len(uAddr) != common.UAddressLength {
+		t.Errorf("Generate uaddress error: %v", err)
+	}
+	if _, err := genOTA(hexutil.Encode(uAddr[:])); err != nil {
+		t.Errorf("Generate OTA error: %v", err)
+	}
+	if err := ks.Update(a, auth, auth+"_new"); err != nil {
 		t.Errorf("Update error: %v", err)
 	}
-	if err := ks.Delete(a, "bar"); err != nil {
+	if err := ks.Delete(a, auth+"_new"); err != nil {
 		t.Errorf("Delete error: %v", err)
 	}
 	if common.FileExist(a.URL.Path) {
@@ -384,4 +398,78 @@ func tmpKeyStore(t *testing.T, encrypted bool) (string, *KeyStore) {
 		newKs = func(kd string) *KeyStore { return NewKeyStore(kd, veryLightScryptN, veryLightScryptP) }
 	}
 	return d, newKs(d)
+}
+
+func genOTA(useStr string) (string, error) {
+	useRaw, err := hexutil.Decode(useStr)
+	if err != nil {
+		return "", err
+	}
+
+	PK1, PK2, err := GeneratePKPairFromUAddress(useRaw)
+	if err != nil {
+		return "", err
+	}
+
+	PKPairStr := hexutil.PKPair2HexSlice(PK1, PK2)
+	SKOTA, err := crypto.GenerateOneTimeKey(PKPairStr[0], PKPairStr[1], PKPairStr[2], PKPairStr[3])
+	if err != nil {
+		return "", err
+	}
+
+	otaStr := strings.Replace(strings.Join(SKOTA, ""), "0x", "", -1)
+	raw, err := hexutil.Decode("0x" + otaStr)
+	if err != nil {
+		return "", err
+	}
+
+	rawUseAddr, err := UaddrFromUncompressedRawBytes(raw)
+	if err != nil || rawUseAddr == nil {
+		return "", nil
+	}
+
+	return hexutil.Encode(rawUseAddr[:]), nil
+}
+
+func TestComputeOTAPPKeys(t *testing.T) {
+	dir, ks := tmpKeyStore(t, true)
+	defer os.RemoveAll(dir)
+
+	// create an account
+	auth := "usechain_test"
+	a, err := ks.NewAccount(auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ks.Unlock(a, auth)
+	if err != nil {
+		t.Errorf("unlock fail. err:%s", err.Error())
+	}
+
+	var uAddr common.UAddress
+	uAddr, err = ks.GetUseAddress(a)
+	if err != nil && len(uAddr) != common.UAddressLength {
+		t.Errorf("Generate uaddress error: %v", err)
+	}
+
+	PK1, PK2, err := GeneratePKPairFromUAddress(uAddr[:])
+	if err != nil {
+		t.Errorf("generate PK pair from use address fail. err:%s", err.Error())
+	}
+
+	PKPairStr := hexutil.PKPair2HexSlice(PK1, PK2)
+	SKOTA, err := crypto.GenerateOneTimeKey(PKPairStr[0], PKPairStr[1], PKPairStr[2], PKPairStr[3])
+	if err != nil {
+		t.Errorf("generate one time key fail. err:%s", err.Error())
+	}
+
+	pk, err := ks.ComputeOTAPPKeys(a, SKOTA[0], SKOTA[1], SKOTA[2], SKOTA[3])
+	if err != nil {
+		t.Errorf("compute ota ppkey fail. err:%s", err.Error())
+	}
+
+	if len(pk) != 4 || len(pk[0]) == 0 || len(pk[1]) == 0 || len(pk[2]) == 0 {
+		t.Errorf("invalid ota pk. pk lenght:%d", len(pk))
+	}
 }
