@@ -747,6 +747,7 @@ func testExternalUI(api *core.SignerAPI) {
 			common.HexToHash("0000H45H"),
 			common.HexToHash("0000H45H"),
 			common.HexToAddress("0000H45H"),
+			common.HexToAddress("0000H45H"),
 			common.HexToHash("0000H00H"),
 			common.HexToHash("0000H45H"),
 			common.HexToHash("0000H45H"),

@@ -43,6 +43,10 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+var (
+	BlockReward *big.Int = big.NewInt(0).Mul(big.NewInt(1e+18), big.NewInt(15))// Block reward in wei for successfully mining a block
+)
+
 const (
 	checkpointInterval = 1024 // Number of blocks after which to save the vote snapshot to the database
 	inmemorySnapshots  = 128  // Number of recent vote snapshots to keep in memory
@@ -489,6 +493,8 @@ func (c *Clique) verifySeal(chain consensus.ChainReader, header *types.Header, p
 // header for running the transactions on top.
 func (c *Clique) Prepare(chain consensus.ChainReader, header *types.Header) error {
 	// If the block isn't a checkpoint, cast a random vote (good enough for now)
+	header.RewardA = common.Address{}
+	header.RewardA = header.Coinbase
 	header.Coinbase = common.Address{}
 	header.Nonce = types.BlockNonce{}
 
@@ -550,18 +556,20 @@ func (c *Clique) Prepare(chain consensus.ChainReader, header *types.Header) erro
 	return nil
 }
 
-// Finalize implements consensus.Engine, ensuring no uncles are set, nor block
+// Finalize implements consensus.Engine, ensuring no uncles are set, add block
 // rewards given.
 func (c *Clique) Finalize(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
-	// No block rewards in PoA, so the state remains as is and uncles are dropped
+	// Accumulate any block rewards and commit the final state root
+	accumulateRewards(chain.Config(), state, header)
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.CalcUncleHash(nil)
 }
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
-// nor block rewards given, and returns the final block.
+// add block rewards given, and returns the final block.
 func (c *Clique) FinalizeAndAssemble(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
-	// No block rewards in PoA, so the state remains as is and uncles are dropped
+	// Accumulate any block rewards and commit the final state root
+	accumulateRewards(chain.Config(), state, header)
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.CalcUncleHash(nil)
 
@@ -719,6 +727,7 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 		header.ParentHash,
 		header.UncleHash,
 		header.Coinbase,
+		header.RewardA,
 		header.Root,
 		header.TxHash,
 		header.ReceiptHash,
@@ -735,4 +744,11 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 	if err != nil {
 		panic("can't encode: " + err.Error())
 	}
+}
+
+func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header *types.Header) {
+	addr := header.RewardA
+
+	reward := new(big.Int).Set(BlockReward)
+	state.AddBalance(addr, reward)
 }
