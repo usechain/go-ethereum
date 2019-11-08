@@ -66,6 +66,7 @@ If you want to encrypt an existing private key, it can be specified by setting
 		}
 
 		var privateKey *ecdsa.PrivateKey
+		var privateKey2 *ecdsa.PrivateKey
 		var err error
 		if file := ctx.String("privatekey"); file != "" {
 			// Load private key from file.
@@ -79,15 +80,22 @@ If you want to encrypt an existing private key, it can be specified by setting
 			if err != nil {
 				utils.Fatalf("Failed to generate random private key: %v", err)
 			}
+
+			privateKey2, err = crypto.GenerateKey()
+			if err != nil {
+				utils.Fatalf("Failed to generate random private key: %v", err)
+			}
 		}
 
 		// Create the keyfile object with a random UUID.
 		id := uuid.NewRandom()
 		key := &keystore.Key{
-			Id:         id,
-			Address:    crypto.PubkeyToAddress(privateKey.PublicKey),
-			PrivateKey: privateKey,
+			Id:          id,
+			Address:     crypto.PubkeyToAddress(privateKey.PublicKey),
+			PrivateKey:  privateKey,
+			PrivateKey2: privateKey2,
 		}
+		key.UAddress = *keystore.GenerateUaddressFromPK(&key.PrivateKey.PublicKey, &key.PrivateKey2.PublicKey)
 
 		// Encrypt key with passphrase.
 		passphrase := promptPassphrase(true)

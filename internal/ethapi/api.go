@@ -19,6 +19,8 @@ package ethapi
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -49,6 +51,18 @@ import (
 
 const (
 	defaultGasPrice = params.GWei
+)
+
+var (
+	ErrInvalidUAddress                  = errors.New("Invalid Uaddress, try again")
+	ErrFailToGeneratePKPairFromUAddress = errors.New("Fail to generate publickey pair from UAddress")
+	ErrFailToGeneratePKPairSlice        = errors.New("Fail to generate publickey pair hex slice")
+	ErrInvalidPrivateKey                = errors.New("Invalid private key")
+	ErrInvalidOTAMixSet                 = errors.New("Invalid OTA mix set")
+	ErrInvalidOTAAddr                   = errors.New("Invalid OTA address")
+	ErrReqTooManyOTAMix                 = errors.New("Require too many OTA mix address")
+	ErrInvalidOTAMixNum                 = errors.New("Invalid required OTA mix address number")
+	ErrInvalidInput                     = errors.New("Invalid input")
 )
 
 // PublicEthereumAPI provides an API to access Ethereum related information.
@@ -297,12 +311,35 @@ func fetchKeystore(am *accounts.Manager) *keystore.KeyStore {
 
 // ImportRawKey stores the given hex encoded ECDSA key into the key directory,
 // encrypting it with the passphrase.
-func (s *PrivateAccountAPI) ImportRawKey(privkey string, password string) (common.Address, error) {
-	key, err := crypto.HexToECDSA(privkey)
+func (s *PrivateAccountAPI) ImportRawKey(privkey0, privkey1 string, password string) (common.Address, error) {
+	if strings.HasPrefix(privkey0, "0x") {
+		privkey0 = privkey0[2:]
+	}
+	if strings.HasPrefix(privkey1, "0x") {
+		privkey1 = privkey1[2:]
+	}
+
+	r0, err := hex.DecodeString(privkey0)
 	if err != nil {
 		return common.Address{}, err
 	}
-	acc, err := fetchKeystore(s.am).ImportECDSA(key, password)
+
+	r1, err := hex.DecodeString(privkey1)
+	if err != nil {
+		return common.Address{}, err
+	}
+
+	sk0, err := crypto.ToECDSA(r0)
+	if err != nil {
+		return common.Address{}, nil
+	}
+
+	sk1, err := crypto.ToECDSA(r1)
+	if err != nil {
+		return common.Address{}, nil
+	}
+
+	acc, err := fetchKeystore(s.am).ImportECDSA(sk0, sk1, password)
 	return acc.Address, err
 }
 
@@ -1782,4 +1819,287 @@ func (s *PublicNetAPI) PeerCount() hexutil.Uint {
 // Version returns the current ethereum protocol version.
 func (s *PublicNetAPI) Version() string {
 	return fmt.Sprintf("%d", s.networkVersion)
+}
+
+////////////////////added for privacy tx ////////////////////////////////////////
+// GetUseAddress returns corresponding UAddress of an ordinary account
+func (s *PublicTransactionPoolAPI) GetUseAddress(ctx context.Context, a common.Address) (string, error) {
+	account := accounts.Account{Address: a}
+	// first fetch the wallet/keystore, and then retrieve the useaddress
+	wallet, err := s.b.AccountManager().Find(account)
+	if err != nil {
+		return "", err
+	}
+	useAddr, err := wallet.GetUseAddress(account)
+	if err != nil {
+		return "", err
+	}
+
+	return hexutil.Encode(useAddr[:]), nil
+}
+
+// GenerateOneTimeAddress returns corresponding One-Time-Address for a given UseAddress
+func (s *PublicTransactionPoolAPI) GenerateOneTimeAddress(ctx context.Context, uAddr string) (string, error) {
+	strlen := len(uAddr)
+	if strlen != (common.UAddressLength<<1)+2 {
+		return "", ErrInvalidUAddress
+	}
+
+	PKBytesSlice, err := hexutil.Decode(uAddr)
+	if err != nil {
+		return "", err
+	}
+
+	PK1, PK2, err := keystore.GeneratePKPairFromUAddress(PKBytesSlice)
+	if err != nil {
+		return "", ErrFailToGeneratePKPairFromUAddress
+	}
+
+	PKPairSlice := hexutil.PKPair2HexSlice(PK1, PK2)
+
+	SKOTA, err := crypto.GenerateOneTimeKey(PKPairSlice[0], PKPairSlice[1], PKPairSlice[2], PKPairSlice[3])
+	if err != nil {
+		return "", err
+	}
+
+	otaStr := strings.Replace(strings.Join(SKOTA, ""), "0x", "", -1)
+	raw, err := hexutil.Decode("0x" + otaStr)
+	if err != nil {
+		return "", err
+	}
+
+	rawUanAddr, err := keystore.UaddrFromUncompressedRawBytes(raw)
+	if err != nil || rawUanAddr == nil {
+		return "", err
+	}
+
+	return hexutil.Encode(rawUanAddr[:]), nil
+}
+
+// ComputeOTAPPKeys compute ota private key, public key and short address
+// from account address and ota full address.
+func (s *PublicTransactionPoolAPI) ComputeOTAPPKeys(ctx context.Context, address common.Address, inOtaAddr string) (string, error) {
+	account := accounts.Account{Address: address}
+	wallet, err := s.b.AccountManager().Find(account)
+	if err != nil {
+		return "", err
+	}
+
+	uanBytes, err := hexutil.Decode(inOtaAddr)
+	if err != nil {
+		return "", err
+	}
+
+	otaBytes, err := keystore.UaddrToUncompressedRawBytes(uanBytes)
+	if err != nil {
+		return "", err
+	}
+
+	otaAddr := hexutil.Encode(otaBytes)
+
+	//AX string, AY string, BX string, BY string
+	otaAddr = strings.Replace(otaAddr, "0x", "", -1)
+	AX := "0x" + otaAddr[0:64]
+	AY := "0x" + otaAddr[64:128]
+
+	BX := "0x" + otaAddr[128:192]
+	BY := "0x" + otaAddr[192:256]
+
+	sS, err := wallet.ComputeOTAPPKeys(account, AX, AY, BX, BY)
+	if err != nil {
+		return "", err
+	}
+
+	otaPub := sS[0] + sS[1][2:]
+	otaPriv := sS[2]
+
+	privateKey, err := crypto.HexToECDSA(otaPriv[2:])
+	if err != nil {
+		return "", err
+	}
+
+	var addr common.Address
+	pubkey := crypto.FromECDSAPub(&privateKey.PublicKey)
+	//caculate the address for replaced pub
+	copy(addr[:], crypto.Keccak256(pubkey[1:])[12:])
+
+	return otaPriv + "+" + otaPub + "+" + hexutil.Encode(addr[:]), nil
+
+}
+
+func (s *PublicTransactionPoolAPI) GetOTAMixSet(ctx context.Context, otaAddr string, setLen int) ([]string, error) {
+	if setLen <= 0 {
+		return []string{}, ErrInvalidOTAMixNum
+	}
+
+	if uint64(setLen) > params.GetOTAMixSetMaxSize {
+		return []string{}, ErrReqTooManyOTAMix
+	}
+
+	if !hexutil.Has0xPrefix(otaAddr) {
+		return []string{}, ErrInvalidOTAAddr
+	}
+
+	orgOtaAddr := common.FromHex(otaAddr)
+	if len(orgOtaAddr) < common.HashLength {
+		return []string{}, ErrInvalidOTAAddr
+	}
+
+	state, _, err := s.b.StateAndHeaderByNumber(ctx, rpc.BlockNumber(-1))
+	if state == nil || err != nil {
+		return nil, err
+	}
+
+	otaAX := orgOtaAddr[:common.HashLength]
+	if len(orgOtaAddr) == common.UAddressLength {
+		otaAX, _ = vm.GetAXFromUseAddr(orgOtaAddr)
+	}
+
+	otaByteSet, _, err := vm.GetOTASet(state, otaAX, setLen)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := make([]string, 0, setLen)
+	for _, otaByte := range otaByteSet {
+		ret = append(ret, common.ToHex(otaByte))
+
+	}
+
+	return ret, nil
+}
+
+// GenRingSignData generate ring sign data
+func (s *PublicTransactionPoolAPI) GenRingSignData(ctx context.Context, hashMsg string, privateKey string, mixUseAdresses string) (string, error) {
+	if !hexutil.Has0xPrefix(privateKey) {
+		return "", ErrInvalidPrivateKey
+	}
+
+	hmsg, err := hexutil.Decode(hashMsg)
+	if err != nil {
+		return "", err
+	}
+
+	ecdsaPrivateKey, err := crypto.HexToECDSA(privateKey[2:])
+	if err != nil {
+		return "", err
+	}
+
+	privKey, err := hexutil.Decode(privateKey)
+	if err != nil {
+		return "", err
+	}
+
+	if privKey == nil {
+		return "", ErrInvalidPrivateKey
+	}
+
+	useAddresses := strings.Split(mixUseAdresses, "+")
+	if len(useAddresses) == 0 {
+		return "", ErrInvalidOTAMixSet
+	}
+
+	return genRingSignData(hmsg, privKey, &ecdsaPrivateKey.PublicKey, useAddresses)
+}
+
+func genRingSignData(hashMsg []byte, privateKey []byte, actualPub *ecdsa.PublicKey, mixUseAdress []string) (string, error) {
+	otaPrivD := new(big.Int).SetBytes(privateKey)
+
+	publicKeys := make([]*ecdsa.PublicKey, 0)
+	publicKeys = append(publicKeys, actualPub)
+
+	for _, strUseAddr := range mixUseAdress {
+		pubBytes, err := hexutil.Decode(strUseAddr)
+		if err != nil {
+			return "", errors.New("fail to decode use address!")
+		}
+
+		if len(pubBytes) != common.UAddressLength {
+			return "", ErrInvalidUAddress
+		}
+
+		publicKeyA, _, err := keystore.GeneratePKPairFromUAddress(pubBytes)
+		if err != nil {
+
+			return "", errors.New("Fail to generate public key from use address!")
+
+		}
+
+		publicKeys = append(publicKeys, publicKeyA)
+	}
+
+	retPublicKeys, keyImage, w_random, q_random, err := crypto.RingSign(hashMsg, otaPrivD, publicKeys)
+	if err != nil {
+		return "", err
+	}
+
+	return encodeRingSignOut(retPublicKeys, keyImage, w_random, q_random)
+}
+
+//  encode all ring sign out data to a string
+func encodeRingSignOut(publicKeys []*ecdsa.PublicKey, keyimage *ecdsa.PublicKey, Ws []*big.Int, Qs []*big.Int) (string, error) {
+	tmp := make([]string, 0)
+	for _, pk := range publicKeys {
+		tmp = append(tmp, common.ToHex(crypto.FromECDSAPub(pk)))
+	}
+
+	pkStr := strings.Join(tmp, "&")
+	k := common.ToHex(crypto.FromECDSAPub(keyimage))
+	wa := make([]string, 0)
+	for _, wi := range Ws {
+		wa = append(wa, hexutil.EncodeBig(wi))
+	}
+
+	wStr := strings.Join(wa, "&")
+	qa := make([]string, 0)
+	for _, qi := range Qs {
+		qa = append(qa, hexutil.EncodeBig(qi))
+	}
+	qStr := strings.Join(qa, "&")
+	outs := strings.Join([]string{pkStr, k, wStr, qStr}, "+")
+	return outs, nil
+}
+
+func (s *PrivateAccountAPI) GetOTABalance(ctx context.Context, blockNr rpc.BlockNumber) (*big.Int, error) {
+	state, _, err := s.b.StateAndHeaderByNumber(ctx, blockNr)
+	if state == nil || err != nil {
+		return nil, err
+	}
+
+	otaB, err := vm.GetUnspendOTATotalBalance(state)
+	if err != nil {
+		return common.Big0, err
+	}
+
+	return otaB, state.Error()
+
+}
+
+// GetOTABalance returns OTA balance
+func (s *PublicBlockChainAPI) GetOTABalance(ctx context.Context, otaUAddr string, blockNr rpc.BlockNumber) (*big.Int, error) {
+	if !hexutil.Has0xPrefix(otaUAddr) {
+		return nil, ErrInvalidOTAAddr
+	}
+
+	state, _, err := s.b.StateAndHeaderByNumber(ctx, blockNr)
+	if state == nil || err != nil {
+		return nil, err
+	}
+
+	var otaAX []byte
+	otaUAddrByte := common.FromHex(otaUAddr)
+	switch len(otaUAddrByte) {
+	case common.HashLength:
+		otaAX = otaUAddrByte
+	case common.UAddressLength:
+		otaAX, _ = vm.GetAXFromUseAddr(otaUAddrByte)
+	default:
+		return nil, ErrInvalidOTAAddr
+	}
+
+	return vm.GetOtaBalanceFromAX(state, otaAX)
+}
+
+func (s *PublicBlockChainAPI) GetSupportUseCoinOTABalances(ctx context.Context) []*big.Int {
+	return vm.GetSupportUseCoinOTABalances()
 }

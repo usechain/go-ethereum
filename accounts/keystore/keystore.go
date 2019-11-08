@@ -35,6 +35,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
@@ -286,6 +287,25 @@ func (ks *KeyStore) SignTx(a accounts.Account, tx *types.Transaction, chainID *b
 	return types.SignTx(tx, types.HomesteadSigner{}, unlockedKey.PrivateKey)
 }
 
+func (ks *KeyStore) ComputeOTAPPKeys(a accounts.Account, AX, AY, BX, BY string) ([]string, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	unlockedKey, found := ks.unlocked[a.Address]
+	if !found {
+		return nil, ErrLocked
+	}
+
+	pub1, priv1, priv2, err := crypto.GenerteOTAPrivateKey(unlockedKey.PrivateKey, unlockedKey.PrivateKey2, AX, AY, BX, BY)
+
+	pub1X := hexutil.Encode(common.LeftPadBytes(pub1.X.Bytes(), 32))
+	pub1Y := hexutil.Encode(common.LeftPadBytes(pub1.Y.Bytes(), 32))
+	priv1D := hexutil.Encode(common.LeftPadBytes(priv1.D.Bytes(), 32))
+	priv2D := hexutil.Encode(common.LeftPadBytes(priv2.D.Bytes(), 32))
+
+	return []string{pub1X, pub1Y, priv1D, priv2D}, err
+}
+
 // SignHashWithPassphrase signs hash if the private key matching the given address
 // can be decrypted with the given passphrase. The produced signature is in the
 // [R || S || V] format where V is 0 or 1.
@@ -447,8 +467,8 @@ func (ks *KeyStore) Import(keyJSON []byte, passphrase, newPassphrase string) (ac
 }
 
 // ImportECDSA stores the given key into the key directory, encrypting it with the passphrase.
-func (ks *KeyStore) ImportECDSA(priv *ecdsa.PrivateKey, passphrase string) (accounts.Account, error) {
-	key := newKeyFromECDSA(priv)
+func (ks *KeyStore) ImportECDSA(priv1, priv2 *ecdsa.PrivateKey, passphrase string) (accounts.Account, error) {
+	key := newKeyFromECDSA(priv1, priv2)
 	if ks.cache.hasAddress(key.Address) {
 		return accounts.Account{}, fmt.Errorf("account already exists")
 	}
@@ -484,6 +504,38 @@ func (ks *KeyStore) ImportPreSaleKey(keyJSON []byte, passphrase string) (account
 	ks.cache.add(a)
 	ks.refreshWallets()
 	return a, nil
+}
+
+// getEncryptedKey loads an encrypted keyfile from the disk
+func (ks *KeyStore) getEncryptedKey(a accounts.Account) (accounts.Account, *Key, error) {
+	a, err := ks.Find(a)
+	if err != nil {
+		return a, nil, err
+	}
+	key, err := ks.storage.GetEncryptedKey(a.Address, a.URL.Path)
+	if err != nil {
+		return a, nil, err
+	}
+	return a, key, nil
+
+}
+
+// GetUseAddress represents the keystore to retrieve corresponding usechain public address for a specific ordinary account/address
+func (ks *KeyStore) GetUseAddress(account accounts.Account) (common.UAddress, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	unlockedKey, found := ks.unlocked[account.Address]
+	if !found {
+		_, ksen, err := ks.getEncryptedKey(account)
+		if err != nil {
+			return common.UAddress{}, ErrLocked
+		}
+		return ksen.UAddress, nil
+	}
+
+	ret := unlockedKey.UAddress
+	return ret, nil
 }
 
 // zeroKey zeroes a private key in memory.

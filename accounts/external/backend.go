@@ -203,6 +203,16 @@ func (api *ExternalSigner) SignTx(account accounts.Account, tx *types.Transactio
 	return res.Tx, nil
 }
 
+// TODO: TBI
+func (api *ExternalSigner) GetUseAddress(account accounts.Account) (common.UAddress, error) {
+	return common.UAddress{}, nil
+}
+
+// TODO: TBI
+func (api *ExternalSigner) ComputeOTAPPKeys(account accounts.Account, AX, AY, BX, BY string) ([]string, error) {
+	return nil, nil
+}
+
 func (api *ExternalSigner) SignTextWithPassphrase(account accounts.Account, passphrase string, text []byte) ([]byte, error) {
 	return []byte{}, fmt.Errorf("password-operations not supported on external signers")
 }

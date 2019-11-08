@@ -31,10 +31,13 @@ encoding may be of uneven length. The number zero encodes as "0x0".
 package hexutil
 
 import (
+	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
 	"math/big"
 	"strconv"
+
+	"github.com/ethereum/go-ethereum/common/math"
 )
 
 const uintBits = 32 << (uint64(^uint(0)) >> 63)
@@ -185,6 +188,10 @@ func EncodeBig(bigint *big.Int) string {
 	return fmt.Sprintf("%#x", bigint)
 }
 
+func Has0xPrefix(input string) bool {
+	return len(input) >= 2 && input[0] == '0' && (input[1] == 'x' || input[1] == 'X')
+}
+
 func has0xPrefix(input string) bool {
 	return len(input) >= 2 && input[0] == '0' && (input[1] == 'x' || input[1] == 'X')
 }
@@ -237,4 +244,14 @@ func mapError(err error) error {
 		return ErrOddLength
 	}
 	return err
+}
+
+// PKPair2HexSlice generate byte-slice based on given public key pair
+func PKPair2HexSlice(pk1 *ecdsa.PublicKey, pk2 *ecdsa.PublicKey) []string {
+	return []string{
+		Encode(math.PaddedBigBytes(pk1.X, 32)),
+		Encode(math.PaddedBigBytes(pk1.Y, 32)),
+		Encode(math.PaddedBigBytes(pk2.X, 32)),
+		Encode(math.PaddedBigBytes(pk2.Y, 32)),
+	}
 }

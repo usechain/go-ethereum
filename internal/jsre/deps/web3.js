@@ -5379,6 +5379,55 @@ var methods = function () {
         inputFormatter: [formatters.inputTransactionFormatter]
     });
 
+    var getUseAddress = new Method({
+        name: 'getUseAddress',
+        call: 'eth_getUseAddress',
+        params: 1,
+        inputFormatter: [formatters.inputAddressFormatter]
+    });
+
+    var generateOneTimeAddress = new Method({
+        name: 'generateOneTimeAddress',
+        call: 'eth_generateOneTimeAddress',
+        params: 1,
+        inputFormatter: [null]
+    });
+
+    var computeOTAPPKeys = new Method({
+        name: 'computeOTAPPKeys',
+        call: 'eth_computeOTAPPKeys',
+        params: 2,
+        inputFormatter: [formatters.inputAddressFormatter, null]
+    });
+
+    var getOTAMixSet = new Method({
+        name: 'getOTAMixSet',
+        call: 'eth_getOTAMixSet',
+        params: 2,
+        inputFormatter: [null, null]
+    });
+
+    var genRingSignData = new Method({
+        name: 'genRingSignData',
+        call: 'eth_genRingSignData',
+        params: 3,
+        inputFormatter: [null, null, null]
+    });
+
+    var getOTABalance = new Method({
+        name: 'getOTABalance',
+        call: 'eth_getOTABalance',
+        params: 2,
+        inputFormatter: [null, formatters.inputDefaultBlockNumberFormatter],
+        outputFormatter: formatters.outputBigNumberFormatter
+    });
+
+    var getSupportUseCoinOTABalances = new Method ({
+        name: 'getSupportUseCoinOTABalances',
+        call: 'eth_getSupportUseCoinOTABalances',
+        params: 0,
+    });
+
     var sign = new Method({
         name: 'sign',
         call: 'eth_sign',
@@ -5444,6 +5493,13 @@ var methods = function () {
         getTransactionFromBlock,
         getTransactionReceipt,
         getTransactionCount,
+        getUseAddress,
+        generateOneTimeAddress,
+        computeOTAPPKeys,
+        getOTAMixSet,
+        genRingSignData,
+        getOTABalance,
+        getSupportUseCoinOTABalances,
         call,
         estimateGas,
         sendRawTransaction,

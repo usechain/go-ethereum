@@ -206,11 +206,15 @@ func TestV1_2(t *testing.T) {
 }
 
 func testDecryptV3(test KeyStoreTestV3, t *testing.T) {
-	privBytes, _, err := decryptKeyV3(&test.Json, test.Password)
+	privBytes1, privBytes2, _, err := decryptKeyV3(&test.Json, test.Password)
 	if err != nil {
 		t.Fatal(err)
 	}
-	privHex := hex.EncodeToString(privBytes)
+	privHex := hex.EncodeToString(privBytes1)
+	if test.Priv != privHex {
+		t.Fatal(fmt.Errorf("Decrypted bytes not equal to test, expected %v have %v", test.Priv, privHex))
+	}
+	privHex = hex.EncodeToString(privBytes2)
 	if test.Priv != privHex {
 		t.Fatal(fmt.Errorf("Decrypted bytes not equal to test, expected %v have %v", test.Priv, privHex))
 	}

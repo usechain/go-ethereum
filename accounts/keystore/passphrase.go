@@ -28,10 +28,12 @@ package keystore
 import (
 	"bytes"
 	"crypto/aes"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -42,6 +44,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/randentropy"
 	"github.com/pborman/uuid"
 	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/crypto/scrypt"
@@ -68,6 +71,13 @@ const (
 
 	scryptR     = 8
 	scryptDKLen = 32
+)
+
+var (
+	ErrUAddressFieldNotExist = errors.New("It seems that this account doesn't include a valid usechain address field, please update your keyfile version")
+	ErrUAddressInvalid       = errors.New("invalid usechain address")
+	ErrInvalidAccountKey     = errors.New("invalid account key")
+	ErrInvalidPrivateKey     = errors.New("invalid private key")
 )
 
 type keyStorePassphrase struct {
@@ -129,6 +139,49 @@ func (ks keyStorePassphrase) StoreKey(filename string, key *Key, auth string) er
 	return os.Rename(tmpName, filename)
 }
 
+// Implements GetEncryptedKey method of keystore interface
+func (ks keyStorePassphrase) GetEncryptedKey(a common.Address, filename string) (*Key, error) {
+	// load the encrypted json keyfile
+	keyjson, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	key, err := GenerateKeyWithUAddress(keyjson)
+	if err != nil {
+		return nil, err
+	}
+	key.Address = a
+	return key, nil
+}
+
+// Generate a Key initialized with UAddress field
+func GenerateKeyWithUAddress(keyjson []byte) (*Key, error) {
+	// parse the json blob into a simple map to fetch the key version
+	m := make(map[string]interface{})
+	if err := json.Unmarshal(keyjson, &m); err != nil {
+		return nil, err
+	}
+
+	uaddress, ok := m["uaddress"].(string)
+
+	if !ok || uaddress == "" {
+		return nil, ErrUAddressFieldNotExist
+	}
+
+	uaddressRaw, err := hex.DecodeString(uaddress)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(uaddressRaw) != common.UAddressLength {
+		return nil, ErrUAddressInvalid
+	}
+
+	key := new(Key)
+	copy(key.UAddress[:], uaddressRaw)
+	return key, nil
+}
+
 func (ks keyStorePassphrase) JoinPath(filename string) string {
 	if filepath.IsAbs(filename) {
 		return filename
@@ -183,18 +236,90 @@ func EncryptDataV3(data, auth []byte, scryptN, scryptP int) (CryptoJSON, error) 
 // EncryptKey encrypts a key using the specified scrypt parameters into a json
 // blob that can be decrypted later on.
 func EncryptKey(key *Key, auth string, scryptN, scryptP int) ([]byte, error) {
-	keyBytes := math.PaddedBigBytes(key.PrivateKey.D, 32)
-	cryptoStruct, err := EncryptDataV3(keyBytes, []byte(auth), scryptN, scryptP)
+	if key == nil {
+		return nil, ErrInvalidAccountKey
+	}
+
+	cryptoStruct, err := EncryptOnePrivateKey(key.PrivateKey, auth, scryptN, scryptP)
+	if err != nil {
+		return nil, err
+	}
+
+	cryptoStruct2, err := EncryptOnePrivateKey(key.PrivateKey2, auth, scryptN, scryptP)
 	if err != nil {
 		return nil, err
 	}
 	encryptedKeyJSONV3 := encryptedKeyJSONV3{
-		hex.EncodeToString(key.Address[:]),
-		cryptoStruct,
+
+		key.Address.Hex()[2:],
+		*cryptoStruct,
+		*cryptoStruct2,
 		key.Id.String(),
 		version,
+		hex.EncodeToString(key.UAddress[:]),
 	}
 	return json.Marshal(encryptedKeyJSONV3)
+	// keyBytes := math.PaddedBigBytes(key.PrivateKey.D, 32)
+	// cryptoStruct, err := EncryptDataV3(keyBytes, []byte(auth), scryptN, scryptP)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// encryptedKeyJSONV3 := encryptedKeyJSONV3{
+	// 	hex.EncodeToString(key.Address[:]),
+	// 	cryptoStruct,
+	// 	key.Id.String(),
+	// 	version,
+	// }
+	// return json.Marshal(encryptedKeyJSONV3)
+}
+
+// EncryptOnePrivateKey encrypts a key using the specified scrypt parameters into one field of a json
+// blob that can be decrypted later on.
+func EncryptOnePrivateKey(privateKey *ecdsa.PrivateKey, auth string, scryptN, scryptP int) (*CryptoJSON, error) {
+	if privateKey == nil {
+		return nil, ErrInvalidPrivateKey
+	}
+
+	authArray := []byte(auth)
+	salt := randentropy.GetEntropyCSPRNG(32)
+	derivedKey, err := scrypt.Key(authArray, salt, scryptN, scryptR, scryptP, scryptDKLen)
+	if err != nil {
+		return nil, err
+	}
+
+	encryptKey := derivedKey[:16]
+	keyBytes := math.PaddedBigBytes(privateKey.D, 32)
+
+	iv := randentropy.GetEntropyCSPRNG(aes.BlockSize) // 16
+
+	cipherText, err := aesCTRXOR(encryptKey, keyBytes, iv)
+	if err != nil {
+		return nil, err
+	}
+	mac := crypto.Keccak256(derivedKey[16:32], cipherText)
+
+	scryptParamsJSON := make(map[string]interface{}, 5)
+	scryptParamsJSON["n"] = scryptN
+	scryptParamsJSON["r"] = scryptR
+	scryptParamsJSON["p"] = scryptP
+	scryptParamsJSON["dklen"] = scryptDKLen
+	scryptParamsJSON["salt"] = hex.EncodeToString(salt)
+
+	cipherParamsJSON := cipherparamsJSON{
+		IV: hex.EncodeToString(iv),
+	}
+
+	cryptoStruct := &CryptoJSON{
+		Cipher:       "aes-128-ctr",
+		CipherText:   hex.EncodeToString(cipherText),
+		CipherParams: cipherParamsJSON,
+		KDF:          keyHeaderKDF,
+		KDFParams:    scryptParamsJSON,
+		MAC:          hex.EncodeToString(mac),
+	}
+
+	return cryptoStruct, nil
+
 }
 
 // DecryptKey decrypts a key from a json blob, returning the private key itself.
@@ -206,32 +331,59 @@ func DecryptKey(keyjson []byte, auth string) (*Key, error) {
 	}
 	// Depending on the version try to parse one way or another
 	var (
-		keyBytes, keyId []byte
-		err             error
+		keyBytes, keyBytes2, keyId []byte
+		err                        error
+		uaddressStr                *string
 	)
 	if version, ok := m["version"].(string); ok && version == "1" {
 		k := new(encryptedKeyJSONV1)
 		if err := json.Unmarshal(keyjson, k); err != nil {
 			return nil, err
 		}
+
 		keyBytes, keyId, err = decryptKeyV1(k, auth)
+		key, err := crypto.ToECDSA(keyBytes)
+		if err != nil || key == nil {
+			return nil, err
+		}
+
+		return &Key{
+			Id:         uuid.UUID(keyId),
+			Address:    crypto.PubkeyToAddress(key.PublicKey),
+			PrivateKey: key,
+		}, nil
 	} else {
 		k := new(encryptedKeyJSONV3)
 		if err := json.Unmarshal(keyjson, k); err != nil {
 			return nil, err
 		}
-		keyBytes, keyId, err = decryptKeyV3(k, auth)
+		keyBytes, keyBytes2, keyId, err = decryptKeyV3(k, auth)
+		if err != nil {
+			return nil, err
+		}
+
+		uaddressStr = &k.UAddress
 	}
 	// Handle any decryption errors and return the key
 	if err != nil {
 		return nil, err
 	}
 	key := crypto.ToECDSAUnsafe(keyBytes)
+	key2 := crypto.ToECDSAUnsafe(keyBytes2)
+	uaddressRaw, err := hex.DecodeString(*uaddressStr)
+	if err != nil {
+		return nil, err
+	}
+
+	var uaddress common.UAddress
+	copy(uaddress[:], uaddressRaw)
 
 	return &Key{
-		Id:         uuid.UUID(keyId),
-		Address:    crypto.PubkeyToAddress(key.PublicKey),
-		PrivateKey: key,
+		Id:          uuid.UUID(keyId),
+		Address:     crypto.PubkeyToAddress(key.PublicKey),
+		PrivateKey:  key,
+		PrivateKey2: key2,
+		UAddress:    uaddress,
 	}, nil
 }
 
@@ -271,16 +423,64 @@ func DecryptDataV3(cryptoJson CryptoJSON, auth string) ([]byte, error) {
 	return plainText, err
 }
 
-func decryptKeyV3(keyProtected *encryptedKeyJSONV3, auth string) (keyBytes []byte, keyId []byte, err error) {
+func decryptKeyV3(keyProtected *encryptedKeyJSONV3, auth string) (keyBytes []byte, keyBytes2 []byte, keyId []byte, err error) {
 	if keyProtected.Version != version {
-		return nil, nil, fmt.Errorf("Version not supported: %v", keyProtected.Version)
+		return nil, nil, nil, fmt.Errorf("Version not supported: %v", keyProtected.Version)
 	}
 	keyId = uuid.Parse(keyProtected.Id)
-	plainText, err := DecryptDataV3(keyProtected.Crypto, auth)
+	plainText, err := decryptKeyV3Item(keyProtected.Crypto, auth)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return plainText, keyId, err
+
+	plainText2, err2 := decryptKeyV3Item(keyProtected.Crypto2, auth)
+	if err2 != nil {
+		if "" == keyProtected.Crypto2.Cipher {
+			plainText2 = make([]byte, 0)
+		} else {
+			return nil, nil, nil, err2
+		}
+	}
+
+	return plainText, plainText2, keyId, err
+}
+
+func decryptKeyV3Item(cryptoItem CryptoJSON, auth string) (keyBytes []byte, err error) {
+	if cryptoItem.Cipher != "aes-128-ctr" {
+		return nil, fmt.Errorf("Cipher not supported: %v", cryptoItem.Cipher)
+	}
+
+	mac, err := hex.DecodeString(cryptoItem.MAC)
+	if err != nil {
+		return nil, err
+	}
+
+	iv, err := hex.DecodeString(cryptoItem.CipherParams.IV)
+	if err != nil {
+		return nil, err
+	}
+
+	cipherText, err := hex.DecodeString(cryptoItem.CipherText)
+	if err != nil {
+		return nil, err
+	}
+
+	derivedKey, err := getKDFKey(cryptoItem, auth)
+	if err != nil {
+		return nil, err
+	}
+
+	calculatedMAC := crypto.Keccak256(derivedKey[16:32], cipherText)
+	if !bytes.Equal(calculatedMAC, mac) {
+		return nil, ErrDecrypt
+	}
+
+	plainText, err := aesCTRXOR(derivedKey[:16], cipherText, iv)
+	if err != nil {
+		return nil, err
+	}
+
+	return plainText, err
 }
 
 func decryptKeyV1(keyProtected *encryptedKeyJSONV1, auth string) (keyBytes []byte, keyId []byte, err error) {
